@@ -631,6 +631,7 @@ namespace PCGExClusterToZoneGraph
 					TSharedPtr<PCGExData::FPointIO> PathIO = This->Context->OutputRoadPaths->Emplace_GetRef(This->VtxDataFacade->Source, PCGExData::EIOInit::New);
 					PathIO->IOIndex = IOBase + This->Cluster->GetNode(Road->Chain->Seed.Node)->PointIndex;
 					Road->BuildPathOutput(PathIO);
+					PCGExPaths::Helpers::SetClosedLoop(PathIO, Road->Chain->bIsClosedLoop);
 				}
 			}
 		};
