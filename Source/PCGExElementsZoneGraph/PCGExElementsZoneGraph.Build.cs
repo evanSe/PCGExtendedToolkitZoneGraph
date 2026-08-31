@@ -31,6 +31,7 @@ public class PCGExElementsZoneGraph : ModuleRules
 				"Engine",
 				"PCG",
 				"PCGExCore",
+				"PCGExFilters",
 				"PCGExFoundations",
 				"PCGExGraphs",
 				"ZoneGraph",
@@ -53,8 +54,7 @@ public class PCGExElementsZoneGraph : ModuleRules
 				"GameplayTags",
 				"PropertyPath",
 				"Settings",
-				"DeveloperSettings",
-				"PCGExtendedToolkit"
+				"DeveloperSettings"
 			}
 		);
 

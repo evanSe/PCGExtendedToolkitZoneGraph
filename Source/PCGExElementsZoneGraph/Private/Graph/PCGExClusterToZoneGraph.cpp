@@ -49,7 +49,7 @@ bool FPCGExClusterToZoneGraphElement::Boot(FPCGExContext* InContext) const
 
 	if (const UPCGComponent* PCGComponent = InContext->GetComponent())
 	{
-		if (PCGComponent->GenerationTrigger == EPCGComponentGenerationTrigger::GenerateAtRuntime)
+		if (PCGComponent->IsManagedByRuntimeGenSystem())
 		{
 			PCGE_LOG_C(Error, GraphAndLog, Context, FTEXT("Zone Graph PCG Nodes should not be used in runtime-generated PCG components."));
 			return false;
@@ -466,7 +466,7 @@ namespace PCGExClusterToZoneGraph
 					This->FilterVtxScope(Scope);
 				};
 
-			FilterBreakpoints->StartSubLoops(NumNodes, GetDefault<UPCGExGlobalSettings>()->GetClusterBatchChunkSize());
+		FilterBreakpoints->StartSubLoops(NumNodes, PCGEX_CORE_SETTINGS.GetClusterBatchChunkSize());
 		}
 		else
 		{

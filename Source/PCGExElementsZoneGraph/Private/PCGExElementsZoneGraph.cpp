@@ -12,12 +12,12 @@
 void FPCGExElementsZoneGraphModule::StartupModule()
 {
 	OldBaseModules.Add(TEXT("PCGExtendedToolkitZoneGraph"));
-	IPCGExLegacyModuleInterface::StartupModule();
+	IPCGExAddonModuleInterface::StartupModule();
 }
 
 void FPCGExElementsZoneGraphModule::ShutdownModule()
 {
-	IPCGExLegacyModuleInterface::ShutdownModule();
+	IPCGExAddonModuleInterface::ShutdownModule();
 }
 
 #undef LOCTEXT_NAMESPACE
