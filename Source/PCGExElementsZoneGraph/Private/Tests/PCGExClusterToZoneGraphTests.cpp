@@ -24,4 +24,25 @@ bool FPCGExClusterToZoneGraphReversedRoadRadiusAssignmentTest::RunTest(const FSt
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPCGExClusterToZoneGraphClosedLoopTerminalAppendTest,
+	"PCGEx.ZoneGraph.ClusterToZoneGraph.ClosedLoopTerminalAppend",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPCGExClusterToZoneGraphClosedLoopTerminalAppendTest::RunTest(const FString& Parameters)
+{
+	using namespace PCGExClusterToZoneGraph;
+
+	TArray<int32> Nodes;
+	Nodes.Reserve(6);
+	Nodes.Append({ 2, 4, 6, 8, 10, 12 });
+	TestEqual(TEXT("Fixture fills its allocation before the append"), Nodes.Num(), Nodes.Max());
+
+	AppendClosedLoopTerminal(Nodes);
+
+	TestEqual(TEXT("Closed loop receives one terminal node"), Nodes.Num(), 7);
+	TestEqual(TEXT("Terminal node repeats the previous last node"), Nodes.Last(), 12);
+	return true;
+}
+
 #endif

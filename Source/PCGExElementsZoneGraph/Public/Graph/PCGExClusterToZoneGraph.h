@@ -218,6 +218,15 @@ namespace PCGExClusterToZoneGraph
 		return JunctionNodeIndex == PrecomputedStartNodeIndex;
 	}
 
+	/** Appends the terminal node needed to materialize a closed path without passing an element of
+	 * the same array back into Add, which can reallocate and invalidate that source reference. */
+	inline void AppendClosedLoopTerminal(TArray<int32>& Nodes)
+	{
+		check(!Nodes.IsEmpty());
+		const int32 TerminalNode = Nodes.Last();
+		Nodes.Add(TerminalNode);
+	}
+
 	class FProcessor;
 
 	class FZGBase : public TSharedFromThis<FZGBase>

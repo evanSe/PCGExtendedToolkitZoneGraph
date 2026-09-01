@@ -214,7 +214,7 @@ namespace PCGExClusterToZoneGraph
 
 		PCGExArrayHelpers::InitArray(PrecomputedPoints, ChainSize);
 
-		if (Chain->bIsClosedLoop) { Nodes.Add(Nodes.Last()); }
+		if (Chain->bIsClosedLoop) { AppendClosedLoopTerminal(Nodes); }
 
 		for (int i = 0; i < ChainSize; i++)
 		{
