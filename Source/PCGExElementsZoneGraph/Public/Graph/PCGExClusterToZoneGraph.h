@@ -208,6 +208,16 @@ protected:
 
 namespace PCGExClusterToZoneGraph
 {
+	/**
+	 * Maps a junction to the corresponding materialized road endpoint by node identity.
+	 * This remains correct when a single edge's stored direction opposes the chain seed and when
+	 * direction sorting reverses a multi-edge chain.
+	 */
+	constexpr bool IsPrecomputedRoadStart(const int32 JunctionNodeIndex, const int32 PrecomputedStartNodeIndex)
+	{
+		return JunctionNodeIndex == PrecomputedStartNodeIndex;
+	}
+
 	class FProcessor;
 
 	class FZGBase : public TSharedFromThis<FZGBase>
@@ -264,7 +274,7 @@ namespace PCGExClusterToZoneGraph
 
 		void Add(const TSharedPtr<FZGRoad>& InRoad, bool bFromStart);
 		void Precompute(const TSharedPtr<PCGExClusters::FCluster>& Cluster);
-		void SyncRadiusToRoads();
+		void SyncRadiusToRoads(const TSharedPtr<PCGExClusters::FCluster>& Cluster);
 		void BuildPathOutput(const TSharedPtr<PCGExData::FPointIO>& InPathIO) const;
 		void Compile();
 	};

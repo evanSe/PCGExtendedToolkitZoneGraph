@@ -489,11 +489,16 @@ namespace PCGExClusterToZoneGraph
 		}
 	}
 
-	void FZGPolygon::SyncRadiusToRoads()
+	void FZGPolygon::SyncRadiusToRoads(const TSharedPtr<PCGExClusters::FCluster>& Cluster)
 	{
 		for (int32 i = 0; i < Roads.Num(); i++)
 		{
-			if (FromStart[i])
+			TArray<int32> OrderedNodes;
+			Roads[i]->Chain->GetNodes(Cluster, OrderedNodes, Roads[i]->bIsReversed);
+			check(!OrderedNodes.IsEmpty());
+			check(NodeIndex == OrderedNodes[0] || NodeIndex == OrderedNodes.Last());
+
+			if (IsPrecomputedRoadStart(NodeIndex, OrderedNodes[0]))
 			{
 				Roads[i]->StartRadius = CachedRoadRadii[i];
 			}
@@ -671,7 +676,7 @@ namespace PCGExClusterToZoneGraph
 		// Phase 2: Polygon precompute (uses road widths for auto-radius)
 		for (const TSharedPtr<FZGPolygon>& Polygon : Polygons) { Polygon->Precompute(Cluster); }
 		// Phase 3: Push final polygon radii back to road endpoints
-		for (const TSharedPtr<FZGPolygon>& Polygon : Polygons) { Polygon->SyncRadiusToRoads(); }
+		for (const TSharedPtr<FZGPolygon>& Polygon : Polygons) { Polygon->SyncRadiusToRoads(Cluster); }
 		// Phase 4: Road precompute (uses synced radii for endpoint offsets)
 		for (const TSharedPtr<FZGRoad>& Road : Roads) { Road->Precompute(Cluster); }
 
