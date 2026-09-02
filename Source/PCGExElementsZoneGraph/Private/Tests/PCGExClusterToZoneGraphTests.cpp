@@ -25,6 +25,21 @@ bool FPCGExClusterToZoneGraphReversedRoadRadiusAssignmentTest::RunTest(const FSt
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPCGExClusterToZoneGraphEndpointTrimDirectionTest,
+	"PCGEx.ZoneGraph.ClusterToZoneGraph.EndpointTrimDirection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPCGExClusterToZoneGraphEndpointTrimDirectionTest::RunTest(const FString& Parameters)
+{
+	using namespace PCGExClusterToZoneGraph;
+
+	TestEqual(TEXT("Materialized road start advances away from its junction"), GetPrecomputedEndpointTrimSign(true), 1.0);
+	TestEqual(TEXT("Materialized road end retreats away from its junction"), GetPrecomputedEndpointTrimSign(false), -1.0);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FPCGExClusterToZoneGraphClosedLoopTerminalAppendTest,
 	"PCGEx.ZoneGraph.ClusterToZoneGraph.ClosedLoopTerminalAppend",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

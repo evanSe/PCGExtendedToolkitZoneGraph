@@ -252,26 +252,18 @@ namespace PCGExClusterToZoneGraph
 
 		if (!Chain->bIsClosedLoop || bIsJunctionAnchoredLoop)
 		{
-			if (bIsJunctionAnchoredLoop)
+			// Rotations were built from the already materialized Nodes order above. Applying
+			// bIsReversed again here double-reverses the trim and pushes a junction mouth through
+			// the center to the opposite side.
+			if (!FirstNode->IsLeaf())
 			{
-				if (!FirstNode->IsLeaf())
-				{
-					PrecomputedPoints[0].Position += PrecomputedPoints[0].Rotation.RotateVector(FVector::ForwardVector) * StartRadius;
-				}
-				if (!LastNode->IsLeaf())
-				{
-					PrecomputedPoints.Last().Position += PrecomputedPoints.Last().Rotation.RotateVector(FVector::BackwardVector) * EndRadius;
-				}
+				PrecomputedPoints[0].Position += PrecomputedPoints[0].Rotation.RotateVector(FVector::ForwardVector)
+					* StartRadius * GetPrecomputedEndpointTrimSign(true);
 			}
-			else if (bIsReversed)
+			if (!LastNode->IsLeaf())
 			{
-				if (!FirstNode->IsLeaf()) { PrecomputedPoints[0].Position += PrecomputedPoints[0].Rotation.RotateVector(FVector::BackwardVector) * StartRadius; }
-				if (!LastNode->IsLeaf()) { PrecomputedPoints.Last().Position += PrecomputedPoints.Last().Rotation.RotateVector(FVector::ForwardVector) * EndRadius; }
-			}
-			else
-			{
-				if (!FirstNode->IsLeaf()) { PrecomputedPoints[0].Position += PrecomputedPoints[0].Rotation.RotateVector(FVector::ForwardVector) * StartRadius; }
-				if (!LastNode->IsLeaf()) { PrecomputedPoints.Last().Position += PrecomputedPoints.Last().Rotation.RotateVector(FVector::BackwardVector) * EndRadius; }
+				PrecomputedPoints.Last().Position += PrecomputedPoints.Last().Rotation.RotateVector(FVector::ForwardVector)
+					* EndRadius * GetPrecomputedEndpointTrimSign(false);
 			}
 
 			auto TrimInteriorSamplesInsideJunction = [](

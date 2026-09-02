@@ -233,6 +233,16 @@ namespace PCGExClusterToZoneGraph
 		return JunctionNodeIndex == PrecomputedStartNodeIndex;
 	}
 
+	/**
+	 * Returns the sign used to trim a materialized road endpoint away from its junction.
+	 * Shape-point rotations already follow the final Nodes order, including direction-sorted
+	 * reversals, so the start always advances and the end always retreats in that order.
+	 */
+	constexpr double GetPrecomputedEndpointTrimSign(const bool bAtRoadStart)
+	{
+		return bAtRoadStart ? 1.0 : -1.0;
+	}
+
 	/** Appends the terminal node needed to materialize a closed path without passing an element of
 	 * the same array back into Add, which can reallocate and invalidate that source reference. */
 	inline void AppendClosedLoopTerminal(TArray<int32>& Nodes)
