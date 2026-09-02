@@ -47,6 +47,17 @@ bool FPCGExClusterToZoneGraphElement::Boot(FPCGExContext* InContext) const
 
 	if (!FPCGExClustersProcessorElement::Boot(InContext)) { return false; }
 
+	TArray<FString> ParsedComponentTags;
+	Settings->CommaSeparatedComponentTags.ParseIntoArray(ParsedComponentTags, TEXT(","), true);
+	for (FString& ComponentTag : ParsedComponentTags)
+	{
+		ComponentTag.TrimStartAndEndInline();
+		if (!ComponentTag.IsEmpty())
+		{
+			Context->ComponentTags.AddUnique(MoveTemp(ComponentTag));
+		}
+	}
+
 	if (const UPCGComponent* PCGComponent = InContext->GetComponent())
 	{
 		if (PCGComponent->IsManagedByRuntimeGenSystem())
@@ -201,14 +212,22 @@ namespace PCGExClusterToZoneGraph
 		TArray<int32> Nodes;
 		const int32 ChainSize = Chain->GetNodes(Cluster, Nodes, bIsReversed);
 
-		PCGExArrayHelpers::InitArray(PrecomputedPoints, ChainSize);
+		if (bIsJunctionAnchoredLoop)
+		{
+			MaterializeJunctionAnchoredLoop(Nodes, Chain->Seed.Node);
+		}
+		else if (Chain->bIsClosedLoop)
+		{
+			AppendClosedLoopTerminal(Nodes);
+		}
 
-		if (Chain->bIsClosedLoop) { Nodes.Add(Nodes.Last()); }
+		const int32 NumMaterializedNodes = bIsJunctionAnchoredLoop ? Nodes.Num() : ChainSize;
+		PCGExArrayHelpers::InitArray(PrecomputedPoints, NumMaterializedNodes);
 
-		for (int i = 0; i < ChainSize; i++)
+		for (int i = 0; i < NumMaterializedNodes; i++)
 		{
 			const FVector Position = Cluster->GetPos(Nodes[i]);
-			const FVector NextPosition = (i == ChainSize - 1)
+			const FVector NextPosition = (i == NumMaterializedNodes - 1)
 				                             ? Position + (Position - Cluster->GetPos(Nodes[i - 1]))
 				                             : Cluster->GetPos(Nodes[i + 1]);
 
@@ -231,17 +250,62 @@ namespace PCGExClusterToZoneGraph
 		const PCGExClusters::FNode* FirstNode = Cluster->GetNode(Nodes[0]);
 		const PCGExClusters::FNode* LastNode = Cluster->GetNode(Nodes.Last());
 
-		if (!Chain->bIsClosedLoop)
+		if (!Chain->bIsClosedLoop || bIsJunctionAnchoredLoop)
 		{
-			if (bIsReversed)
+			// Rotations were built from the already materialized Nodes order above. Applying
+			// bIsReversed again here double-reverses the trim and pushes a junction mouth through
+			// the center to the opposite side.
+			if (!FirstNode->IsLeaf())
 			{
-				if (!FirstNode->IsLeaf()) { PrecomputedPoints[0].Position += PrecomputedPoints[0].Rotation.RotateVector(FVector::BackwardVector) * StartRadius; }
-				if (!LastNode->IsLeaf()) { PrecomputedPoints.Last().Position += PrecomputedPoints.Last().Rotation.RotateVector(FVector::ForwardVector) * EndRadius; }
+				PrecomputedPoints[0].Position += PrecomputedPoints[0].Rotation.RotateVector(FVector::ForwardVector)
+					* StartRadius * GetPrecomputedEndpointTrimSign(true);
 			}
-			else
+			if (!LastNode->IsLeaf())
 			{
-				if (!FirstNode->IsLeaf()) { PrecomputedPoints[0].Position += PrecomputedPoints[0].Rotation.RotateVector(FVector::ForwardVector) * StartRadius; }
-				if (!LastNode->IsLeaf()) { PrecomputedPoints.Last().Position += PrecomputedPoints.Last().Rotation.RotateVector(FVector::BackwardVector) * EndRadius; }
+				PrecomputedPoints.Last().Position += PrecomputedPoints.Last().Rotation.RotateVector(FVector::ForwardVector)
+					* EndRadius * GetPrecomputedEndpointTrimSign(false);
+			}
+
+			auto TrimInteriorSamplesInsideJunction = [](
+				TArray<FZoneShapePoint>& Points,
+				const FVector& JunctionCenter,
+				const double Radius,
+				const bool bTrimStart)
+			{
+				const double RadiusSquared = FMath::Square(FMath::Max(0.0, Radius));
+				while (Points.Num() > 2)
+				{
+					const int32 CandidateIndex = bTrimStart ? 1 : Points.Num() - 2;
+					if (FVector::DistSquared(Points[CandidateIndex].Position, JunctionCenter) > RadiusSquared)
+					{
+						break;
+					}
+					Points.RemoveAt(CandidateIndex, 1, EAllowShrinking::No);
+				}
+			};
+
+			// Dense imported paths can contain samples between a junction center and the
+			// radius-clipped endpoint. Keeping those samples after moving only the terminal
+			// point folds the ZoneGraph boundary back across itself. Keep a one-half-profile
+			// lead-in clear as well: without it, a sharply curving imported path can turn
+			// across the polygon boundary immediately after an otherwise exact shared mouth.
+			// The surviving positions and clipped endpoint remain the authored ZoneShape
+			// geometry consumed by ZoneGraph; no downstream footprint solver is involved.
+			if (!FirstNode->IsLeaf())
+			{
+				TrimInteriorSamplesInsideJunction(
+					PrecomputedPoints,
+					Cluster->GetPos(Nodes[0]),
+					StartRadius + CachedTotalProfileWidth * 0.5,
+					true);
+			}
+			if (!LastNode->IsLeaf())
+			{
+				TrimInteriorSamplesInsideJunction(
+					PrecomputedPoints,
+					Cluster->GetPos(Nodes.Last()),
+					EndRadius + CachedTotalProfileWidth * 0.5,
+					false);
 			}
 		}
 	}
@@ -347,13 +411,74 @@ namespace PCGExClusterToZoneGraph
 
 		TArray<int32> Order;
 		PCGExArrayHelpers::ArrayOfIndices(Order, Roads.Num());
+		auto GetRoadDirection = [&](const int32 RoadIndex)
+		{
+			const TSharedPtr<FZGRoad>& Road = Roads[RoadIndex];
+			return Road->Chain->GetOutwardDirAt(
+				Cluster,
+				NodeIndex,
+				GetChainExitSide(FromStart[RoadIndex], Road->bIsReversed));
+		};
+		auto DirectionAngle = [&](const int32 RoadIndex)
+		{
+			const FVector Direction = GetRoadDirection(RoadIndex);
+			double Angle = FMath::Atan2(Direction.Y, Direction.X);
+			if (Angle < 0.0)
+			{
+				Angle += UE_DOUBLE_PI * 2.0;
+			}
+			return Angle;
+		};
 		Order.Sort(
 			[&](const int32 A, const int32 B)
 			{
-				const FVector DirA = Roads[A]->Chain->GetEdgeDir(Cluster, FromStart[A]);
-				const FVector DirB = Roads[B]->Chain->GetEdgeDir(Cluster, FromStart[B]);
-				return PCGExMath::GetRadiansBetweenVectors(DirA, FVector::ForwardVector) > PCGExMath::GetRadiansBetweenVectors(DirB, FVector::ForwardVector);
+				return DirectionAngle(A) < DirectionAngle(B);
 			});
+
+		TArray<double> OrderedAngles;
+		OrderedAngles.Reserve(Order.Num());
+		for (const int32 RoadIndex : Order)
+		{
+			OrderedAngles.Add(DirectionAngle(RoadIndex));
+		}
+
+		if (Order.Num() > 1)
+		{
+			auto PositiveGap = [](const double From, const double To)
+			{
+				double Gap = To - From;
+				if (Gap < 0.0)
+				{
+					Gap += UE_DOUBLE_PI * 2.0;
+				}
+				return Gap;
+			};
+			auto RequiredMouthRadius = [](const double Gap, const double HalfWidthA, const double HalfWidthB)
+			{
+				if (Gap >= UE_DOUBLE_PI - UE_DOUBLE_SMALL_NUMBER || Gap >= UE_DOUBLE_PI * 0.5)
+				{
+					return 0.0;
+				}
+				const double HalfGapTangent = FMath::Tan(FMath::Max(Gap * 0.5, FMath::DegreesToRadians(0.5)));
+				return (HalfWidthA + HalfWidthB) * 0.5 / FMath::Max(HalfGapTangent, UE_DOUBLE_SMALL_NUMBER);
+			};
+
+			for (int32 OrderedIndex = 0; OrderedIndex < Order.Num(); ++OrderedIndex)
+			{
+				const int32 PreviousOrderedIndex = (OrderedIndex + Order.Num() - 1) % Order.Num();
+				const int32 NextOrderedIndex = (OrderedIndex + 1) % Order.Num();
+				const int32 RoadIndex = Order[OrderedIndex];
+				const double HalfWidth = Roads[RoadIndex]->CachedTotalProfileWidth * 0.5;
+				const double PreviousHalfWidth = Roads[Order[PreviousOrderedIndex]]->CachedTotalProfileWidth * 0.5;
+				const double NextHalfWidth = Roads[Order[NextOrderedIndex]]->CachedTotalProfileWidth * 0.5;
+				const double PreviousGap = PositiveGap(OrderedAngles[PreviousOrderedIndex], OrderedAngles[OrderedIndex]);
+				const double NextGap = PositiveGap(OrderedAngles[OrderedIndex], OrderedAngles[NextOrderedIndex]);
+				CachedRoadRadii[RoadIndex] = FMath::Max3(
+					CachedRoadRadii[RoadIndex],
+					RequiredMouthRadius(PreviousGap, HalfWidth, PreviousHalfWidth),
+					RequiredMouthRadius(NextGap, HalfWidth, NextHalfWidth));
+			}
+		}
 
 		PCGExArrayHelpers::InitArray(PrecomputedPoints, Order.Num());
 		CachedPointLaneProfiles.SetNum(Order.Num());
@@ -363,12 +488,7 @@ namespace PCGExClusterToZoneGraph
 		{
 			const int32 Ri = Order[i];
 			const TSharedPtr<FZGRoad>& Road = Roads[Ri];
-
-			const PCGExClusters::FNode* OtherNode = (Road->Chain->SingleEdge != -1)
-				                                        ? (FromStart[Ri] ? Cluster->GetNode(Road->Chain->Links.Last()) : Cluster->GetNode(Road->Chain->Seed.Node))
-				                                        : (FromStart[Ri] ? Cluster->GetNode(Road->Chain->Links[0]) : Cluster->GetNode(Road->Chain->Links.Last(1)));
-
-			const FVector RoadDirection = (Cluster->GetPos(OtherNode) - CenterPosition).GetSafeNormal();
+			const FVector RoadDirection = GetRoadDirection(Ri);
 
 			FZoneShapePoint ShapePoint = FZoneShapePoint(CenterPosition + RoadDirection * CachedRoadRadii[Ri]);
 			ShapePoint.SetRotationFromForwardAndUp(RoadDirection * -1, FVector::UpVector);
@@ -380,11 +500,29 @@ namespace PCGExClusterToZoneGraph
 		}
 	}
 
-	void FZGPolygon::SyncRadiusToRoads()
+	void FZGPolygon::SyncRadiusToRoads(const TSharedPtr<PCGExClusters::FCluster>& Cluster)
 	{
 		for (int32 i = 0; i < Roads.Num(); i++)
 		{
-			if (FromStart[i])
+			if (Roads[i]->bIsJunctionAnchoredLoop)
+			{
+				if (FromStart[i])
+				{
+					Roads[i]->StartRadius = CachedRoadRadii[i];
+				}
+				else
+				{
+					Roads[i]->EndRadius = CachedRoadRadii[i];
+				}
+				continue;
+			}
+
+			TArray<int32> OrderedNodes;
+			Roads[i]->Chain->GetNodes(Cluster, OrderedNodes, Roads[i]->bIsReversed);
+			check(!OrderedNodes.IsEmpty());
+			check(NodeIndex == OrderedNodes[0] || NodeIndex == OrderedNodes.Last());
+
+			if (IsPrecomputedRoadStart(NodeIndex, OrderedNodes[0]))
 			{
 				Roads[i]->StartRadius = CachedRoadRadii[i];
 			}
@@ -517,16 +655,35 @@ namespace PCGExClusterToZoneGraph
 			TSharedPtr<FZGRoad> Road = MakeShared<FZGRoad>(this, Chain, bReverse);
 			Roads.Add(Road);
 
+			const PCGExClusters::FNode* Seed = Cluster->GetNode(Chain->Seed.Node);
+			Road->bIsJunctionAnchoredLoop = Chain->bIsClosedLoop && IsJunctionDegree(Seed->Num());
+			if (Road->bIsJunctionAnchoredLoop)
+			{
+				const TSharedPtr<FZGPolygon>* PolygonPtr = Map.Find(Chain->Seed.Node);
+				if (!PolygonPtr)
+				{
+					TSharedPtr<FZGPolygon> NewPolygon = MakeShared<FZGPolygon>(this, Seed);
+					Polygons.Add(NewPolygon);
+					Map.Add(Chain->Seed.Node, NewPolygon);
+					PolygonPtr = &NewPolygon;
+				}
+
+				// The opened loop contributes two distinct mouths to the same junction polygon.
+				(*PolygonPtr)->Add(Road, true);
+				(*PolygonPtr)->Add(Road, false);
+				continue;
+			}
+
 			const PCGExClusters::FNode* Start = Cluster->GetNode(StartNode);
 			const PCGExClusters::FNode* End = Cluster->GetNode(EndNode);
 
-			if (Chain->bIsClosedLoop && Start->IsBinary() && End->IsBinary())
+			if (Chain->bIsClosedLoop)
 			{
 				// Roaming closed loop, road only!
 				continue;
 			}
 
-			if (!Start->IsLeaf())
+			if (IsJunctionDegree(Start->Num()))
 			{
 				const TSharedPtr<FZGPolygon>* PolygonPtr = Map.Find(StartNode);
 
@@ -540,7 +697,7 @@ namespace PCGExClusterToZoneGraph
 				(*PolygonPtr)->Add(Road, true);
 			}
 
-			if (!End->IsLeaf())
+			if (IsJunctionDegree(End->Num()))
 			{
 				const TSharedPtr<FZGPolygon>* PolygonPtr = Map.Find(EndNode);
 
@@ -562,7 +719,7 @@ namespace PCGExClusterToZoneGraph
 		// Phase 2: Polygon precompute (uses road widths for auto-radius)
 		for (const TSharedPtr<FZGPolygon>& Polygon : Polygons) { Polygon->Precompute(Cluster); }
 		// Phase 3: Push final polygon radii back to road endpoints
-		for (const TSharedPtr<FZGPolygon>& Polygon : Polygons) { Polygon->SyncRadiusToRoads(); }
+		for (const TSharedPtr<FZGPolygon>& Polygon : Polygons) { Polygon->SyncRadiusToRoads(Cluster); }
 		// Phase 4: Road precompute (uses synced radii for endpoint offsets)
 		for (const TSharedPtr<FZGRoad>& Road : Roads) { Road->Precompute(Cluster); }
 
@@ -631,7 +788,7 @@ namespace PCGExClusterToZoneGraph
 					TSharedPtr<PCGExData::FPointIO> PathIO = This->Context->OutputRoadPaths->Emplace_GetRef(This->VtxDataFacade->Source, PCGExData::EIOInit::New);
 					PathIO->IOIndex = IOBase + This->Cluster->GetNode(Road->Chain->Seed.Node)->PointIndex;
 					Road->BuildPathOutput(PathIO);
-					PCGExPaths::Helpers::SetClosedLoop(PathIO, Road->Chain->bIsClosedLoop);
+					PCGExPaths::Helpers::SetClosedLoop(PathIO, Road->Chain->bIsClosedLoop && !Road->bIsJunctionAnchoredLoop);
 				}
 			}
 		};
