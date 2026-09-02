@@ -212,14 +212,22 @@ namespace PCGExClusterToZoneGraph
 		TArray<int32> Nodes;
 		const int32 ChainSize = Chain->GetNodes(Cluster, Nodes, bIsReversed);
 
-		PCGExArrayHelpers::InitArray(PrecomputedPoints, ChainSize);
+		if (bIsJunctionAnchoredLoop)
+		{
+			MaterializeJunctionAnchoredLoop(Nodes, Chain->Seed.Node);
+		}
+		else if (Chain->bIsClosedLoop)
+		{
+			AppendClosedLoopTerminal(Nodes);
+		}
 
-		if (Chain->bIsClosedLoop) { AppendClosedLoopTerminal(Nodes); }
+		const int32 NumMaterializedNodes = bIsJunctionAnchoredLoop ? Nodes.Num() : ChainSize;
+		PCGExArrayHelpers::InitArray(PrecomputedPoints, NumMaterializedNodes);
 
-		for (int i = 0; i < ChainSize; i++)
+		for (int i = 0; i < NumMaterializedNodes; i++)
 		{
 			const FVector Position = Cluster->GetPos(Nodes[i]);
-			const FVector NextPosition = (i == ChainSize - 1)
+			const FVector NextPosition = (i == NumMaterializedNodes - 1)
 				                             ? Position + (Position - Cluster->GetPos(Nodes[i - 1]))
 				                             : Cluster->GetPos(Nodes[i + 1]);
 
@@ -242,9 +250,20 @@ namespace PCGExClusterToZoneGraph
 		const PCGExClusters::FNode* FirstNode = Cluster->GetNode(Nodes[0]);
 		const PCGExClusters::FNode* LastNode = Cluster->GetNode(Nodes.Last());
 
-		if (!Chain->bIsClosedLoop)
+		if (!Chain->bIsClosedLoop || bIsJunctionAnchoredLoop)
 		{
-			if (bIsReversed)
+			if (bIsJunctionAnchoredLoop)
+			{
+				if (!FirstNode->IsLeaf())
+				{
+					PrecomputedPoints[0].Position += PrecomputedPoints[0].Rotation.RotateVector(FVector::ForwardVector) * StartRadius;
+				}
+				if (!LastNode->IsLeaf())
+				{
+					PrecomputedPoints.Last().Position += PrecomputedPoints.Last().Rotation.RotateVector(FVector::BackwardVector) * EndRadius;
+				}
+			}
+			else if (bIsReversed)
 			{
 				if (!FirstNode->IsLeaf()) { PrecomputedPoints[0].Position += PrecomputedPoints[0].Rotation.RotateVector(FVector::BackwardVector) * StartRadius; }
 				if (!LastNode->IsLeaf()) { PrecomputedPoints.Last().Position += PrecomputedPoints.Last().Rotation.RotateVector(FVector::ForwardVector) * EndRadius; }
@@ -403,10 +422,10 @@ namespace PCGExClusterToZoneGraph
 		auto GetRoadDirection = [&](const int32 RoadIndex)
 		{
 			const TSharedPtr<FZGRoad>& Road = Roads[RoadIndex];
-			const PCGExClusters::FNode* OtherNode = (Road->Chain->SingleEdge != -1)
-				                                           ? (FromStart[RoadIndex] ? Cluster->GetNode(Road->Chain->Links.Last()) : Cluster->GetNode(Road->Chain->Seed.Node))
-				                                           : (FromStart[RoadIndex] ? Cluster->GetNode(Road->Chain->Links[0]) : Cluster->GetNode(Road->Chain->Links.Last(1)));
-			return (Cluster->GetPos(OtherNode) - CenterPosition).GetSafeNormal();
+			return Road->Chain->GetOutwardDirAt(
+				Cluster,
+				NodeIndex,
+				GetChainExitSide(FromStart[RoadIndex], Road->bIsReversed));
 		};
 		auto DirectionAngle = [&](const int32 RoadIndex)
 		{
@@ -493,6 +512,19 @@ namespace PCGExClusterToZoneGraph
 	{
 		for (int32 i = 0; i < Roads.Num(); i++)
 		{
+			if (Roads[i]->bIsJunctionAnchoredLoop)
+			{
+				if (FromStart[i])
+				{
+					Roads[i]->StartRadius = CachedRoadRadii[i];
+				}
+				else
+				{
+					Roads[i]->EndRadius = CachedRoadRadii[i];
+				}
+				continue;
+			}
+
 			TArray<int32> OrderedNodes;
 			Roads[i]->Chain->GetNodes(Cluster, OrderedNodes, Roads[i]->bIsReversed);
 			check(!OrderedNodes.IsEmpty());
@@ -631,16 +663,35 @@ namespace PCGExClusterToZoneGraph
 			TSharedPtr<FZGRoad> Road = MakeShared<FZGRoad>(this, Chain, bReverse);
 			Roads.Add(Road);
 
+			const PCGExClusters::FNode* Seed = Cluster->GetNode(Chain->Seed.Node);
+			Road->bIsJunctionAnchoredLoop = Chain->bIsClosedLoop && IsJunctionDegree(Seed->Num());
+			if (Road->bIsJunctionAnchoredLoop)
+			{
+				const TSharedPtr<FZGPolygon>* PolygonPtr = Map.Find(Chain->Seed.Node);
+				if (!PolygonPtr)
+				{
+					TSharedPtr<FZGPolygon> NewPolygon = MakeShared<FZGPolygon>(this, Seed);
+					Polygons.Add(NewPolygon);
+					Map.Add(Chain->Seed.Node, NewPolygon);
+					PolygonPtr = &NewPolygon;
+				}
+
+				// The opened loop contributes two distinct mouths to the same junction polygon.
+				(*PolygonPtr)->Add(Road, true);
+				(*PolygonPtr)->Add(Road, false);
+				continue;
+			}
+
 			const PCGExClusters::FNode* Start = Cluster->GetNode(StartNode);
 			const PCGExClusters::FNode* End = Cluster->GetNode(EndNode);
 
-			if (Chain->bIsClosedLoop && Start->IsBinary() && End->IsBinary())
+			if (Chain->bIsClosedLoop)
 			{
 				// Roaming closed loop, road only!
 				continue;
 			}
 
-			if (!Start->IsLeaf())
+			if (IsJunctionDegree(Start->Num()))
 			{
 				const TSharedPtr<FZGPolygon>* PolygonPtr = Map.Find(StartNode);
 
@@ -654,7 +705,7 @@ namespace PCGExClusterToZoneGraph
 				(*PolygonPtr)->Add(Road, true);
 			}
 
-			if (!End->IsLeaf())
+			if (IsJunctionDegree(End->Num()))
 			{
 				const TSharedPtr<FZGPolygon>* PolygonPtr = Map.Find(EndNode);
 
@@ -745,7 +796,7 @@ namespace PCGExClusterToZoneGraph
 					TSharedPtr<PCGExData::FPointIO> PathIO = This->Context->OutputRoadPaths->Emplace_GetRef(This->VtxDataFacade->Source, PCGExData::EIOInit::New);
 					PathIO->IOIndex = IOBase + This->Cluster->GetNode(Road->Chain->Seed.Node)->PointIndex;
 					Road->BuildPathOutput(PathIO);
-					PCGExPaths::Helpers::SetClosedLoop(PathIO, Road->Chain->bIsClosedLoop);
+					PCGExPaths::Helpers::SetClosedLoop(PathIO, Road->Chain->bIsClosedLoop && !Road->bIsJunctionAnchoredLoop);
 				}
 			}
 		};

@@ -33,6 +33,21 @@ namespace PCGExMT
 	class FTimeSlicedMainThreadLoop;
 }
 
+namespace PCGExClusterToZoneGraph
+{
+	/** Only degree-three-or-higher nodes own a junction polygon. Binary nodes belong to roads. */
+	constexpr bool IsJunctionDegree(const int32 Degree)
+	{
+		return Degree >= 3;
+	}
+
+	/** Converts a materialized path endpoint side back to the chain's opening/closing side. */
+	constexpr bool GetChainExitSide(const bool bAtMaterializedStart, const bool bIsReversed)
+	{
+		return bIsReversed ? !bAtMaterializedStart : bAtMaterializedStart;
+	}
+}
+
 UCLASS(MinimalAPI, BlueprintType, ClassGroup = (Procedural), Category="PCGEx|Clusters", meta=(PCGExNodeLibraryDoc="cluster-to-zone-graph"))
 class UPCGExClusterToZoneGraphSettings : public UPCGExClustersProcessorSettings
 {
@@ -227,6 +242,21 @@ namespace PCGExClusterToZoneGraph
 		Nodes.Add(TerminalNode);
 	}
 
+	/** Opens a loop at its junction seed by placing that seed at both materialized endpoints. */
+	inline void MaterializeJunctionAnchoredLoop(TArray<int32>& Nodes, const int32 SeedNode)
+	{
+		check(!Nodes.IsEmpty());
+		check(Nodes[0] == SeedNode || Nodes.Last() == SeedNode);
+		if (Nodes[0] == SeedNode)
+		{
+			Nodes.Add(SeedNode);
+		}
+		else
+		{
+			Nodes.Insert(SeedNode, 0);
+		}
+	}
+
 	class FProcessor;
 
 	class FZGBase : public TSharedFromThis<FZGBase>
@@ -249,6 +279,7 @@ namespace PCGExClusterToZoneGraph
 	public:
 		TSharedPtr<PCGExClusters::FNodeChain> Chain;
 		bool bIsReversed = false;
+		bool bIsJunctionAnchoredLoop = false;
 
 		FZoneLaneProfileRef CachedLaneProfile;
 		double CachedMaxLaneWidth = 0;

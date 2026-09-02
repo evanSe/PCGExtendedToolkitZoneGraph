@@ -45,4 +45,47 @@ bool FPCGExClusterToZoneGraphClosedLoopTerminalAppendTest::RunTest(const FString
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPCGExClusterToZoneGraphJunctionDegreeGateTest,
+	"PCGEx.ZoneGraph.ClusterToZoneGraph.JunctionDegreeGate",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPCGExClusterToZoneGraphJunctionDegreeGateTest::RunTest(const FString& Parameters)
+{
+	using namespace PCGExClusterToZoneGraph;
+
+	TestFalse(TEXT("An isolated node is not a junction"), IsJunctionDegree(0));
+	TestFalse(TEXT("A leaf is not a junction"), IsJunctionDegree(1));
+	TestFalse(TEXT("A binary closed-loop seam is not a junction"), IsJunctionDegree(2));
+	TestTrue(TEXT("A three-way node is a junction"), IsJunctionDegree(3));
+	TestTrue(TEXT("A four-way node is a junction"), IsJunctionDegree(4));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPCGExClusterToZoneGraphAnchoredLoopMaterializationTest,
+	"PCGEx.ZoneGraph.ClusterToZoneGraph.AnchoredLoopMaterialization",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPCGExClusterToZoneGraphAnchoredLoopMaterializationTest::RunTest(const FString& Parameters)
+{
+	using namespace PCGExClusterToZoneGraph;
+
+	TArray<int32> ForwardNodes = { 10, 11, 12 };
+	MaterializeJunctionAnchoredLoop(ForwardNodes, 10);
+	TestEqual(TEXT("Forward loop opens at the seed on both ends"), ForwardNodes, TArray<int32>({ 10, 11, 12, 10 }));
+
+	TArray<int32> ReversedNodes = { 12, 11, 10 };
+	MaterializeJunctionAnchoredLoop(ReversedNodes, 10);
+	TestEqual(TEXT("Reversed loop opens at the seed on both ends"), ReversedNodes, TArray<int32>({ 10, 12, 11, 10 }));
+
+	TestTrue(TEXT("Forward materialized start maps to the opening side"), GetChainExitSide(true, false));
+	TestFalse(TEXT("Forward materialized end maps to the closing side"), GetChainExitSide(false, false));
+	TestFalse(TEXT("Reversed materialized start maps to the closing side"), GetChainExitSide(true, true));
+	TestTrue(TEXT("Reversed materialized end maps to the opening side"), GetChainExitSide(false, true));
+
+	return true;
+}
+
 #endif
